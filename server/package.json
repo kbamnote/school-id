@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "main": "server.js",
-  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js",
@@ -13,6 +15,7 @@
     "test:watch": "node --test --watch \"test/**/*.test.js\"",
     "readiness": "node src/scripts/readinessCheck.js"
   },
+  "type": "commonjs",
   "dependencies": {
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
