@@ -111,6 +111,23 @@ function validateEnv() {
     }
   }
 
+  /*
+   * A loopback database in production is almost always the example value left
+   * in place. Inside a container 127.0.0.1 is the container itself, so this
+   * fails with a bare ECONNREFUSED that says nothing about the real cause.
+   * ALLOW_LOCAL_DB exists for the rare host-networking deployment.
+   */
+  if (env.isProd && !bool(process.env.ALLOW_LOCAL_DB, false)) {
+    const host = String(env.mongoUri || '');
+    if (/@?(localhost|127\.0\.0\.1|\[::1\])[:/]/.test(host)) {
+      throw new Error(
+        'MONGO_URI points at localhost in production - this is the example value, ' +
+          'not a real database. Set it to your Atlas connection string ending in a ' +
+          'database name. (Set ALLOW_LOCAL_DB=true if a local database is genuinely intended.)'
+      );
+    }
+  }
+
   if (env.mail.driver === 'smtp') {
     const { host, user, pass } = env.mail.smtp;
     if (!host || !user || !pass) {
