@@ -1,0 +1,20 @@
+{
+  "name": "mrpw-printdata",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MR Print World Pvt. Ltd. - multi-tenant print data collection, verification and production SaaS",
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --prefix server run dev",
+    "dev:web": "npm --prefix client run dev",
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
+    "seed": "npm --prefix server run seed",
+    "bootstrap": "npm --prefix server run bootstrap",
+    "test": "npm --prefix server test",
+    "readiness": "npm --prefix server run readiness"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
