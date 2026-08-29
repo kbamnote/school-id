@@ -10,6 +10,8 @@ import {
   Eye,
   Loader2,
   RotateCcw,
+  Wand2,
+  Check,
 } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader.jsx';
 import Card, { CardHeader, CardBody } from '../../components/ui/Card.jsx';
@@ -22,6 +24,7 @@ import { StatusBadge } from '../../components/ui/Badge.jsx';
 import DesignerCanvas from '../../features/cardDesigner/DesignerCanvas.jsx';
 import ElementInspector from '../../features/cardDesigner/ElementInspector.jsx';
 import { sampleValues } from '../../features/cardDesigner/resolveValue.js';
+import detectFields from '../../features/cardDesigner/detectFields.js';
 import { cardDesignsApi } from '../../api/cardDesignsApi.js';
 import { errorMessage } from '../../api/client';
 import useUnsavedChanges from '../../hooks/useUnsavedChanges.js';
@@ -78,6 +81,8 @@ export default function CardDesignerPage() {
   const [uploading, setUploading] = useState(false);
   const [renderUrl, setRenderUrl] = useState(null);
   const [rendering, setRendering] = useState(false);
+  const [detecting, setDetecting] = useState(null);
+  const [detectSummary, setDetectSummary] = useState(null);
 
   const artworkInput = useRef(null);
   const { blocked, confirmLeave, cancelLeave } = useUnsavedChanges(dirty);
@@ -116,11 +121,16 @@ export default function CardDesignerPage() {
 
   /* ------------------------------ mutations ------------------------------ */
 
+  /*
+   * Touching a detected element counts as confirming it - the admin has
+   * looked at it and decided where it goes, which is exactly the human check
+   * the `suggested` flag is waiting for.
+   */
   const patchElement = useCallback((elementId, patch) => {
     setDesign((current) => ({
       ...current,
       elements: current.elements.map((el) =>
-        el.id === elementId ? { ...el, ...patch } : el
+        el.id === elementId ? { ...el, ...patch, suggested: false } : el
       ),
     }));
     setDirty(true);
@@ -130,7 +140,7 @@ export default function CardDesignerPage() {
     setDesign((current) => ({
       ...current,
       elements: current.elements.map((el) =>
-        el.id === elementId ? { ...el, style: { ...el.style, ...patch } } : el
+        el.id === elementId ? { ...el, style: { ...el.style, ...patch }, suggested: false } : el
       ),
     }));
     setDirty(true);
@@ -173,6 +183,27 @@ export default function CardDesignerPage() {
     setDirty(true);
   }, []);
 
+  /** Accepts every detected element as-is. */
+  const confirmAllSuggestions = useCallback(() => {
+    setDesign((current) => ({
+      ...current,
+      elements: current.elements.map((el) => (el.suggested ? { ...el, suggested: false } : el)),
+    }));
+    setDetectSummary(null);
+    setDirty(true);
+  }, []);
+
+  /** Throws the detected elements away, leaving anything placed by hand. */
+  const discardSuggestions = useCallback(() => {
+    setDesign((current) => ({
+      ...current,
+      elements: current.elements.filter((el) => !el.suggested),
+    }));
+    setSelectedId(null);
+    setDetectSummary(null);
+    setDirty(true);
+  }, []);
+
   const duplicateElement = useCallback((element) => {
     const copy = {
       ...element,
@@ -209,6 +240,7 @@ export default function CardDesignerPage() {
           width: el.width,
           height: el.height,
           z: el.z || 0,
+          suggested: Boolean(el.suggested),
           style: el.style,
         })),
       });
@@ -246,13 +278,43 @@ export default function CardDesignerPage() {
           [face]: result.design[face],
           hasBack: result.design.hasBack,
         }));
+
+        /*
+         * Read the artwork and propose elements for it. Runs in the browser
+         * on the file we already have, and never blocks the upload - a design
+         * with no detectable text is a perfectly normal design.
+         */
+        setDetectSummary(null);
+        setDetecting({ progress: 0 });
+        try {
+          const { elements: found, summary } = await detectFields(file, fields, (p) =>
+            setDetecting({ progress: p })
+          );
+
+          if (found.length) {
+            setDesign((current) => ({
+              ...current,
+              elements: [
+                ...current.elements,
+                ...found.map((el) => ({ ...el, face })),
+              ],
+            }));
+            setDirty(true);
+          }
+          setDetectSummary({ ...summary, added: found.length });
+        } catch (detectErr) {
+          // Detection is a convenience; failing it must not fail the upload.
+          setDetectSummary({ failed: true, message: detectErr.message });
+        } finally {
+          setDetecting(null);
+        }
       } catch (err) {
         setSaveError(errorMessage(err));
       } finally {
         setUploading(false);
       }
     },
-    [id, face]
+    [id, face, fields]
   );
 
   const renderProof = useCallback(async () => {
@@ -275,6 +337,7 @@ export default function CardDesignerPage() {
 
   const previewValues = useMemo(() => sampleValues(fields), [fields]);
   const selected = design?.elements.find((el) => el.id === selectedId) || null;
+  const suggestionCount = design?.elements.filter((el) => el.suggested).length || 0;
 
   if (loading) return <PageLoader label="Opening the designer..." />;
   if (error) return <ErrorState message={error} onRetry={load} />;
@@ -427,6 +490,51 @@ export default function CardDesignerPage() {
               {faceElements.length} element{faceElements.length === 1 ? '' : 's'}
             </span>
           </div>
+
+          {detecting && (
+            <div className="mb-3 rounded-lg bg-brand-50 p-3 ring-1 ring-brand-200">
+              <div className="flex items-center gap-2 text-sm text-brand-800">
+                <Wand2 className="h-4 w-4 shrink-0 animate-pulse" />
+                Reading the artwork...
+              </div>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-brand-200">
+                <div
+                  className="h-full rounded-full bg-brand-600 transition-[width]"
+                  style={{ width: `${Math.round((detecting.progress || 0) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {suggestionCount > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg bg-warning-50 p-3 ring-1 ring-warning-200">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-warning-600" />
+              <p className="flex-1 text-sm text-warning-900">
+                <span className="font-semibold">{suggestionCount}</span> element
+                {suggestionCount === 1 ? '' : 's'} detected from the artwork. Check each one is
+                the right field &mdash; anything left unconfirmed blocks activation.
+              </p>
+              <div className="flex gap-2">
+                <Button size="xs" variant="secondary" onClick={discardSuggestions}>
+                  Discard
+                </Button>
+                <Button size="xs" variant="success" onClick={confirmAllSuggestions}>
+                  <Check className="h-3.5 w-3.5" />
+                  Confirm all
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {detectSummary && !suggestionCount && (
+            <p className="mb-3 text-xs text-ink-500">
+              {detectSummary.failed
+                ? `Could not read the artwork automatically (${detectSummary.message}). Place elements by hand.`
+                : detectSummary.added
+                  ? `Read ${detectSummary.linesRead} line(s) of text from the artwork.`
+                  : 'No text found in the artwork - place elements by hand.'}
+            </p>
+          )}
 
           <div className="flex justify-center rounded-xl bg-ink-100 p-6">
             <DesignerCanvas

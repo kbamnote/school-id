@@ -98,6 +98,14 @@ function lint(design, form) {
   const elements = design.elements || [];
 
   if (!elements.length) warnings.push('This design has no elements yet.');
+
+  const unreviewed = elements.filter((el) => el.suggested).length;
+  if (unreviewed) {
+    warnings.push(
+      `${unreviewed} element${unreviewed === 1 ? '' : 's'} detected from the artwork ` +
+        `${unreviewed === 1 ? 'is' : 'are'} not confirmed yet - check each one is the right field.`
+    );
+  }
   if (!design.front?.artwork?.publicId) {
     warnings.push('No front artwork uploaded - cards will print on a plain background.');
   }

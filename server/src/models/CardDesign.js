@@ -61,6 +61,15 @@ const elementSchema = new mongoose.Schema(
 
     /** Stacking, so overlapping elements are predictable. */
     z: { type: Number, default: 0 },
+
+    /**
+     * Proposed by artwork detection and not yet confirmed by a person.
+     *
+     * OCR cannot tell a per-person value from wording fixed on every card, so
+     * an unreviewed guess must never reach production - a designer's name read
+     * as a student's name would print on the whole batch.
+     */
+    suggested: { type: Boolean, default: false },
   },
   { _id: false }
 );

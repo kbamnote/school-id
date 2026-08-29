@@ -172,6 +172,14 @@ export default function CardPreview({
             'absolute',
             onSelect ? 'cursor-move' : 'pointer-events-none',
             selectedId === el.id ? 'outline outline-2 outline-brand-500' : '',
+            /*
+             * Only marked while editing. An unconfirmed guess must look
+             * provisional to the admin, but the end user's live preview is
+             * driven by an active design, which cannot contain any.
+             */
+            el.suggested && onSelect && selectedId !== el.id
+              ? 'outline-dashed outline-2 outline-warning-500/70'
+              : '',
           ].join(' ')}
           style={{
             left: `${el.x}%`,

@@ -62,6 +62,7 @@ const elementSchema = z
     height: z.number().min(1).max(140),
     style: styleSchema.optional(),
     z: z.number().int().min(0).max(999).optional(),
+    suggested: z.boolean().optional(),
   })
   .strict()
   .superRefine((el, ctx) => {

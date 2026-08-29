@@ -74,6 +74,22 @@ export default function ElementInspector({
 
   return (
     <div className="space-y-4 p-4">
+      {element.suggested && (
+        <div className="rounded-lg bg-warning-50 p-2.5 text-xs ring-1 ring-warning-200">
+          <p className="font-medium text-warning-900">Detected from the artwork</p>
+          {element.detectedText && (
+            <p className="mt-1 text-warning-800">
+              Read as &ldquo;{element.detectedText}&rdquo;
+              {element.confidence ? ` (${element.confidence}% confident)` : ''}
+            </p>
+          )}
+          <p className="mt-1 text-warning-700">
+            Is this the same on every card, or does it change per person? Adjust anything below
+            to confirm it.
+          </p>
+        </div>
+      )}
+
       <div className="flex items-center gap-1.5">
         <Button size="xs" variant="ghost" onClick={onRaise} title="Bring forward">
           <MoveUp className="h-3.5 w-3.5" />

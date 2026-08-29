@@ -126,6 +126,19 @@ const setStatus = asyncHandler(async (req, res) => {
         { code: 'DESIGN_EMPTY' }
       );
     }
+    /*
+     * Detection cannot tell a per-person value from wording that is fixed on
+     * every card. Activating with an unconfirmed guess still on the layout is
+     * how one person's name ends up printed on the whole batch.
+     */
+    const unreviewed = design.elements.filter((el) => el.suggested);
+    if (unreviewed.length) {
+      throw ApiError.badRequest(
+        `Confirm the ${unreviewed.length} detected element${unreviewed.length === 1 ? '' : 's'} before activating this design.`,
+        { code: 'DESIGN_HAS_SUGGESTIONS', details: { unreviewed: unreviewed.length } }
+      );
+    }
+
     await designService.activate(design);
   } else {
     design.status = 'draft';
