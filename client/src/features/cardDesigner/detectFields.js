@@ -123,18 +123,22 @@ function sampleTextColour(imageData, box, width) {
 /**
  * Finds the photograph box.
  *
- * Scanning every candidate rectangle for a "quiet" area finds the largest
- * patch of blank card, not the photo well. Instead this grows connected
- * regions that differ from the card's background but carry no detail of their
- * own - which is exactly what an empty photo well is - then keeps the one
- * that is rectangular and portrait-shaped.
+ * Flatness is the wrong signal. An EMPTY well is flat, but a design supplied
+ * with a sample face in it is full of detail - testing for "no detail" finds
+ * the first kind and silently misses the second, which is what most real
+ * artwork looks like.
  *
- * The header band passes the first two tests and is rejected by the third:
- * it is wide and short, not portrait.
+ * So detail is ignored entirely. What is masked out instead is TEXT, using
+ * the boxes OCR already reported, leaving "everything that is not the page
+ * background and not writing". The photo well is then the largest
+ * portrait-shaped region in that set, whether it is empty or occupied.
+ *
+ * Two shapes are accepted: a solid region (a tint, or a photograph), and a
+ * hollow one (a well drawn as an outline on the same colour as the card).
  *
  * Returns percentages, or null when nothing convincing is present.
  */
-function detectPhotoBox(imageData, width, height) {
+function detectPhotoBox(imageData, width, height, textBoxes = []) {
   const STEP = 6;
   const cols = Math.floor(width / STEP);
   const rows = Math.floor(height / STEP);
@@ -144,12 +148,8 @@ function detectPhotoBox(imageData, width, height) {
     const i = (Math.min(width - 1, px) + Math.min(height - 1, py) * width) * 4;
     return { r: data[i], g: data[i + 1], b: data[i + 2] };
   };
-  const lumAt = (px, py) => {
-    const c = at(px, py);
-    return 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
-  };
 
-  /* Background, sampled away from the header band. */
+  /* Background, sampled at the edges away from any header band. */
   const samples = [
     at(3, Math.floor(height * 0.55)),
     at(width - 4, Math.floor(height * 0.55)),
@@ -162,32 +162,38 @@ function detectPhotoBox(imageData, width, height) {
     b: samples.reduce((s, c) => s + c.b, 0) / samples.length,
   };
 
-  /*
-   * A cell qualifies when it differs from the background yet holds no detail.
-   * Text differs too, so busy cells are excluded - otherwise every printed
-   * line joins the region it sits in.
-   */
-  const mask = new Uint8Array(cols * rows);
-  for (let cy = 0; cy < rows - 1; cy += 1) {
-    for (let cx = 0; cx < cols - 1; cx += 1) {
-      const x = cx * STEP;
-      const y = cy * STEP;
-      const c = at(x, y);
-      const delta = Math.abs(c.r - bg.r) + Math.abs(c.g - bg.g) + Math.abs(c.b - bg.b);
-      const here = lumAt(x, y);
-      const detail = Math.abs(here - lumAt(x + STEP, y)) + Math.abs(here - lumAt(x, y + STEP));
-      mask[cy * cols + cx] = delta > 14 && detail < 30 ? 1 : 0;
+  /* Cells covered by text, padded a little so descenders do not leak out. */
+  const isText = new Uint8Array(cols * rows);
+  for (const box of textBoxes) {
+    const pad = STEP;
+    const x0 = Math.max(0, Math.floor((box.x0 - pad) / STEP));
+    const x1 = Math.min(cols - 1, Math.ceil((box.x1 + pad) / STEP));
+    const y0 = Math.max(0, Math.floor((box.y0 - pad) / STEP));
+    const y1 = Math.min(rows - 1, Math.ceil((box.y1 + pad) / STEP));
+    for (let y = y0; y <= y1; y += 1) {
+      for (let x = x0; x <= x1; x += 1) isText[y * cols + x] = 1;
     }
   }
 
-  /* Grow regions, iteratively so a large well cannot overflow the stack. */
+  const mask = new Uint8Array(cols * rows);
+  for (let cy = 0; cy < rows; cy += 1) {
+    for (let cx = 0; cx < cols; cx += 1) {
+      const idx = cy * cols + cx;
+      if (isText[idx]) continue;
+      const c = at(cx * STEP, cy * STEP);
+      const delta = Math.abs(c.r - bg.r) + Math.abs(c.g - bg.g) + Math.abs(c.b - bg.b);
+      mask[idx] = delta > 16 ? 1 : 0;
+    }
+  }
+
+  /* Grow regions iteratively - a full-bleed photo would overflow recursion. */
   const seen = new Uint8Array(cols * rows);
   let best = null;
 
   for (let cy = 0; cy < rows; cy += 1) {
     for (let cx = 0; cx < cols; cx += 1) {
-      const start = cy * cols + cx;
-      if (!mask[start] || seen[start]) continue;
+      const startIdx = cy * cols + cx;
+      if (!mask[startIdx] || seen[startIdx]) continue;
 
       let x0 = cx;
       let x1 = cx;
@@ -195,8 +201,8 @@ function detectPhotoBox(imageData, width, height) {
       let y1 = cy;
       let count = 0;
 
-      const stack = [start];
-      seen[start] = 1;
+      const stack = [startIdx];
+      seen[startIdx] = 1;
 
       while (stack.length) {
         const idx = stack.pop();
@@ -225,24 +231,22 @@ function detectPhotoBox(imageData, width, height) {
       const w = x1 - x0 + 1;
       const h = y1 - y0 + 1;
       const aspect = w / h;
-
-      // Portrait, a real fraction of the card, and actually filling its box.
       const fillRatio = count / (w * h);
       const widthPct = (w * STEP * 100) / width;
       const heightPct = (h * STEP * 100) / height;
 
-      if (
-        aspect > 0.5 &&
-        aspect < 1.1 &&
-        fillRatio > 0.75 &&
-        widthPct > 12 &&
-        widthPct < 70 &&
-        heightPct > 10 &&
-        heightPct < 55
-      ) {
-        const area = w * h;
-        if (!best || area > best.area) best = { area, x0, y0, w, h };
-      }
+      // Roughly portrait or square - a header band or footer rule is neither.
+      if (aspect < 0.45 || aspect > 1.25) continue;
+      if (widthPct < 10 || widthPct > 75) continue;
+      if (heightPct < 8 || heightPct > 60) continue;
+
+      // Solid (tint or photograph), or hollow (a drawn outline).
+      const solid = fillRatio > 0.7;
+      const outline = fillRatio > 0.08 && fillRatio < 0.55;
+      if (!solid && !outline) continue;
+
+      const area = w * h;
+      if (!best || area > best.area) best = { area, x0, y0, w, h, fillRatio };
     }
   }
 
@@ -448,7 +452,20 @@ export default async function detectFields(file, fields = [], onProgress = () =>
 
   // The photo box, if the artwork has an obvious well for one.
   const photoField = fields.find((f) => f.type === 'photo');
-  const box = detectPhotoBox(imageData, width, height);
+  const found = detectPhotoBox(imageData, width, height, lines.map((l) => l.bbox));
+
+  /*
+   * When the well cannot be located, still offer a box rather than nothing.
+   * Dragging one into place is quicker than discovering the form has a photo
+   * field that the layout forgot - a card that prints with no photograph is a
+   * far worse outcome than a box in the wrong place.
+   */
+  const box =
+    found ||
+    (photoField
+      ? { x: 32, y: 18, width: 36, height: 30, placed: false }
+      : null);
+
   if (photoField && box && box.width > 8 && box.height > 8) {
     elements.unshift({
       id: newId(),
@@ -463,8 +480,8 @@ export default async function detectFields(file, fields = [], onProgress = () =>
       z: 1,
       suggested: true,
       style: { objectFit: 'cover', radius: 0, hideIfEmpty: true },
-      detectedText: 'photo area',
-      confidence: 70,
+      detectedText: found ? 'photo area' : 'photo area not found - drag into place',
+      confidence: found ? 70 : 0,
     });
   }
 
@@ -476,7 +493,8 @@ export default async function detectFields(file, fields = [], onProgress = () =>
       linesRead: lines.length,
       bound: elements.filter((e) => e.type === 'field').length,
       static: elements.filter((e) => e.type === 'static').length,
-      photoFound: Boolean(box && photoField),
+      photoFound: Boolean(found && photoField),
+      photoGuessed: Boolean(!found && photoField),
     },
   };
 }
