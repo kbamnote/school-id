@@ -13,6 +13,8 @@ require('./models');
 const routes = require('./routes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { apiLimiter } = require('./middleware/rateLimit');
+const ApiError = require('./utils/ApiError');
+const logger = require('./utils/logger');
 
 const app = express();
 
@@ -35,7 +37,21 @@ app.use(
     origin(origin, cb) {
       // No origin = same-origin, curl, or a mobile client. Allowed.
       if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`Origin ${origin} is not allowed by CORS`));
+
+      /*
+       * A plain Error here reaches the catch-all handler and is reported as a
+       * generic 500, which tells whoever is debugging nothing at all - the
+       * browser just shows a failed request. An ApiError renders as a 403
+       * naming the offending origin, and the log records what CLIENT_URL
+       * actually contains, which is the thing that is wrong.
+       */
+      logger.warn('Blocked a request by CORS', { origin, allowed: allowedOrigins });
+      return cb(
+        ApiError.forbidden(
+          `Origin ${origin} is not allowed. Add it to CLIENT_URL on the server.`,
+          { code: 'CORS_ORIGIN_BLOCKED' }
+        )
+      );
     },
     credentials: true, // required for the refresh-token cookie
   })
