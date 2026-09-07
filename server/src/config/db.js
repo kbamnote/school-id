@@ -11,7 +11,15 @@ mongoose.set('strictQuery', true);
 if (!env.isProd) mongoose.set('debug', false);
 
 async function connectDB() {
-  mongoose.connection.on('connected', () => logger.info('MongoDB connected'));
+  /*
+   * Name the database, not just "connected". Two environments pointed at
+   * different databases on the same cluster look identical in the logs, and
+   * the symptom is a valid password being rejected - which reads as an auth
+   * bug rather than a configuration one.
+   */
+  mongoose.connection.on('connected', () =>
+    logger.info(`MongoDB connected -> ${mongoose.connection.name} @ ${mongoose.connection.host}`)
+  );
   mongoose.connection.on('error', (err) => logger.error('MongoDB error', err));
   mongoose.connection.on('disconnected', () => logger.warn('MongoDB disconnected'));
 
